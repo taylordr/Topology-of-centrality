@@ -11,10 +11,9 @@ Low-centrality nodes enter first, and the hubs enter last.
 ``superlevel=True`` reverses the order so hubs enter first; it does this by
 negating ``c``.
 
-By default the complex is the graph itself (0- and 1-simplices), as specified.
-With no 2-simplices nothing can fill a loop, so every H1 class lives forever.
-``max_dim=None`` uses the full clique (flag) complex instead: each clique is
-born when its last vertex is, and loops that cliques fill die.
+The complex is the graph itself: 0- and 1-simplices only. Triangles are
+deliberately left unfilled (no 2-simplices), so every cycle, 3-cycles
+included, is born when its last edge enters and lives forever.
 """
 
 from pathlib import Path
@@ -31,7 +30,7 @@ H0_COLOR = "#257de0"  # categorical slot 1 (blue)
 H1_COLOR = "#f47230"  # categorical slot 2 (orange)
 
 
-def centrality_simplex_tree(G, values, max_dim=1, superlevel=False):
+def centrality_simplex_tree(G, values, superlevel=False):
     """Build a gudhi SimplexTree with the vertex-centrality filtration.
 
     Parameters
@@ -39,10 +38,6 @@ def centrality_simplex_tree(G, values, max_dim=1, superlevel=False):
     G : networkx.Graph
     values : dict
         Node -> filtration value (e.g. eigenvector centrality).
-    max_dim : int or None
-        1 for the graph (vertices + edges); k >= 2 adds cliques up to dimension k;
-        None adds every clique (the full clique complex). Truncating below the
-        largest clique leaves hollow cliques that show up as spurious voids.
     superlevel : bool
         If True, filter by -value so the highest-centrality nodes enter first.
     """
@@ -53,12 +48,7 @@ def centrality_simplex_tree(G, values, max_dim=1, superlevel=False):
         st.insert([v], filtration=f[v])
     for u, v in G.edges():
         st.insert([u, v], filtration=max(f[u], f[v]))
-    if max_dim is None:
-        max_dim = max(len(c) for c in nx.find_cliques(G)) - 1
-    if max_dim > 1:
-        # Each higher simplex gets the max filtration of its faces.
-        st.expansion(max_dim)
-    st.make_filtration_non_decreasing()
+    # No expansion: triangles stay hollow, so all H1 classes are permanent.
     return st
 
 
@@ -188,15 +178,9 @@ if __name__ == "__main__":
     out = Path("figures")
     out.mkdir(exist_ok=True)
 
-    configs = [
-        ("graph_sublevel", 1, False,
-         "Eigenvector-centrality filtration on the karate club graph (vertices + edges)"),
-        ("clique_sublevel", None, False,
-         "Same filtration on the full clique complex (cliques fill loops)"),
-    ]
-    for tag, max_dim, sup, title in configs:
-        st = centrality_simplex_tree(G, ec, max_dim=max_dim, superlevel=sup)
-        intervals, pairs = persistence_summary(st)
-        report(tag, st, intervals, pairs)
-        plot_tda(G, st, intervals, pairs, out / f"tda_eigenvector_{tag}.png", title)
+    st = centrality_simplex_tree(G, ec)
+    intervals, pairs = persistence_summary(st)
+    report("graph_sublevel", st, intervals, pairs)
+    plot_tda(G, st, intervals, pairs, out / "tda_eigenvector_graph_sublevel.png",
+             "Eigenvector-centrality filtration on the karate club graph (vertices + edges)")
     print("\nSaved figures to", out.resolve())
