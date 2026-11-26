@@ -1,15 +1,17 @@
 """Persistent homology of the karate club network filtered by eigenvector centrality.
 
-Filtration (sublevel set of the centrality function on the graph):
+Filtration (superlevel set of the centrality function on the graph): a
+threshold ``t`` sweeps *down* from the largest centrality, and
 
-* vertex ``v`` is born at height ``c(v)``: it enters once the threshold
-  reaches its centrality;
-* edge ``(u, v)`` is born at ``max(c(u), c(v))``: it enters once both
-  endpoints are present.
+* vertex ``v`` is born when ``t`` drops to ``c(v)``, so the node with the
+  largest centrality is born first;
+* edge ``(u, v)`` is born when both endpoints are present, at
+  ``min(c(u), c(v))``.
 
-Low-centrality nodes enter first, and the hubs enter last.
-``superlevel=True`` reverses the order so hubs enter first; it does this by
-negating ``c``.
+gudhi needs non-decreasing filtration values, so the simplex tree stores
+``-c``. Plots and printed values are converted back to centrality.
+``superlevel=False`` gives the sublevel version, in which the lowest-centrality
+node is born first.
 
 The complex is the graph itself: 0- and 1-simplices only. Triangles are
 deliberately left unfilled (no 2-simplices), so every cycle, 3-cycles
@@ -22,6 +24,7 @@ import gudhi
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+from matplotlib.ticker import FuncFormatter
 
 INK = "#191919"
 INK_2 = "#666666"
@@ -30,7 +33,7 @@ H0_COLOR = "#257de0"  # categorical slot 1 (blue)
 H1_COLOR = "#f47230"  # categorical slot 2 (orange)
 
 
-def centrality_simplex_tree(G, values, superlevel=False):
+def centrality_simplex_tree(G, values, superlevel=True):
     """Build a gudhi SimplexTree with the vertex-centrality filtration.
 
     Parameters
@@ -39,7 +42,8 @@ def centrality_simplex_tree(G, values, superlevel=False):
     values : dict
         Node -> filtration value (e.g. eigenvector centrality).
     superlevel : bool
-        If True, filter by -value so the highest-centrality nodes enter first.
+        If True (default), filter by -value so the highest-centrality node is
+        born first. If False, the lowest-centrality node is born first.
     """
     sign = -1.0 if superlevel else 1.0
     f = {v: sign * float(values[v]) for v in G}
@@ -81,7 +85,15 @@ def h0_bars_with_vertices(st, pairs):
     return sorted(bars, key=lambda x: (x[2] - x[1], -x[1]), reverse=True)
 
 
-def plot_tda(G, st, intervals, pairs, path, title):
+def plot_tda(G, st, intervals, pairs, path, title, superlevel=True):
+    sign = -1.0 if superlevel else 1.0
+    # Ticks are in gudhi's units; label them in centrality units.
+    last = max(st.filtration([v]) for v in G)
+    # Hide ticks past the last birth: that region is where infinite bars are drawn.
+    cent_fmt = FuncFormatter(
+        lambda x, _: "" if x > last + 1e-9 else f"{abs(sign * x) if abs(x) < 5e-3 else sign * x:.2f}")
+    xlab = ("Eigenvector centrality threshold (decreasing →)" if superlevel
+            else "Eigenvector centrality threshold (increasing →)")
     fvals = np.array(sorted({st.filtration([v]) for v in G}))
     lo, hi = fvals.min(), fvals.max()
     pad = 0.05 * (hi - lo)
@@ -102,7 +114,8 @@ def plot_tda(G, st, intervals, pairs, path, title):
     ax.set_yticks(range(len(bars)), [f"node {v}" for v, _, _ in bars], fontsize=9)
     ax.invert_yaxis()
     ax.set_xlim(lo - pad, inf_y + 1.5 * pad)
-    ax.set_xlabel("Filtration value (eigenvector centrality)")
+    ax.set_xlabel(xlab)
+    ax.xaxis.set_major_formatter(cent_fmt)
     ax.set_title("H0 barcode: components, by birth node", loc="left", fontsize=12)
     # gudhi omits zero-length pairs: those vertices join an existing component on arrival.
     n_zero = G.number_of_nodes() - len(bars)
@@ -124,8 +137,10 @@ def plot_tda(G, st, intervals, pairs, path, title):
                    label=f"H{d} ({len(iv)} classes)", zorder=3)
     ax.set_xlim(lo - pad, inf_y + pad)
     ax.set_ylim(lo - pad, inf_y + 2 * pad)
-    ax.set_xlabel("Birth")
-    ax.set_ylabel("Death")
+    ax.set_xlabel("Birth (centrality)")
+    ax.set_ylabel("Death (centrality)")
+    ax.xaxis.set_major_formatter(cent_fmt)
+    ax.yaxis.set_major_formatter(cent_fmt)
     ax.legend(frameon=False, loc="lower right", labelcolor=INK_2)
     ax.set_title("Persistence diagram", loc="left", fontsize=12)
 
@@ -138,7 +153,8 @@ def plot_tda(G, st, intervals, pairs, path, title):
         ax.step(t, y, where="post", color=color, lw=2)
         ax.text(t[-1], y[-1], f"  β{d} = {y[-1]}", color=INK, va="center", fontsize=10)
     ax.set_xlim(lo - pad, hi + 3.5 * pad)
-    ax.set_xlabel("Filtration value")
+    ax.set_xlabel(xlab)
+    ax.xaxis.set_major_formatter(cent_fmt)
     ax.set_ylabel("Betti number")
     ax.set_title("Betti curves", loc="left", fontsize=12)
 
@@ -159,16 +175,19 @@ def plot_tda(G, st, intervals, pairs, path, title):
     plt.close(fig)
 
 
-def report(name, st, intervals, pairs):
+def report(name, st, intervals, pairs, superlevel=True):
+    sign = -1.0 if superlevel else 1.0
     print(f"\n=== {name} ===")
     print(f"simplices: {st.num_simplices()}  (vertices {st.num_vertices()}, dim {st.dimension()})")
     for d, iv in intervals.items():
         n_inf = int(np.isinf(iv[:, 1]).sum()) if len(iv) else 0
         n_pos = int(((iv[:, 1] - iv[:, 0]) > 0).sum()) if len(iv) else 0
         print(f"H{d}: {len(iv)} intervals, {n_inf} infinite, {n_pos} with positive length")
-    print("Longest finite H0 bars (birth node: birth -> death):")
+    first = min(st.get_skeleton(0), key=lambda x: x[1])
+    print(f"First vertex born: node {first[0][0]} (centrality {sign * first[1]:.4f})")
+    print("Longest finite H0 bars, in centrality (birth node: birth -> death):")
     for v, b, d in [x for x in h0_bars_with_vertices(st, pairs) if np.isfinite(x[2])][:5]:
-        print(f"  node {v:2d}: {b:.4f} -> {d:.4f}  (persistence {d - b:.4f})")
+        print(f"  node {v:2d}: {sign * b:.4f} -> {sign * d:.4f}  (persistence {d - b:.4f})")
     print("Betti numbers of full complex:", st.betti_numbers())
 
 
@@ -178,9 +197,10 @@ if __name__ == "__main__":
     out = Path("figures")
     out.mkdir(exist_ok=True)
 
-    st = centrality_simplex_tree(G, ec)
+    st = centrality_simplex_tree(G, ec, superlevel=True)
     intervals, pairs = persistence_summary(st)
-    report("graph_sublevel", st, intervals, pairs)
-    plot_tda(G, st, intervals, pairs, out / "tda_eigenvector_graph_sublevel.png",
-             "Eigenvector-centrality filtration on the karate club graph (vertices + edges)")
+    report("graph_superlevel", st, intervals, pairs, superlevel=True)
+    plot_tda(G, st, intervals, pairs, out / "tda_eigenvector_graph_superlevel.png",
+             "Eigenvector-centrality superlevel filtration: highest-centrality node born first",
+             superlevel=True)
     print("\nSaved figures to", out.resolve())
