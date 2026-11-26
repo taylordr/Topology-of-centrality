@@ -2,3 +2,4 @@ networkx
 pandas
 scipy
 matplotlib
+gudhi
